@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from utils import read_file, search_files, setup_logger
+from src.utils import read_file, search_files, setup_logger
 
 DEFAULT_EXTENSIONS = [".md", ".txt", ".rst", ".py"]
 logger = setup_logger(__name__)
