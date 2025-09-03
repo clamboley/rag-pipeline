@@ -1,0 +1,21 @@
+[project]
+name = "rag-pipeline"
+version = "0.1.0"
+description = "Trying to implement a simple RAG pipeline"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+### -- Ruff -- ###
+
+[tool.ruff]
+line-length = 100
+select = ["ALL"]
+ignore = [
+    "S311",
+    "C901",
+    "PLR0912",
+    "PLR0913",
+    "PLR0915",
+    "PLW0603",
+]
