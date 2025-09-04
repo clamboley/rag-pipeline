@@ -199,15 +199,23 @@ class OfflineCodeDocRAG:
             save_after_adding (bool): Whether to save the index after adding documents.
         """
         all_chunks = []
+        existing_ids = {doc.idx for doc in self.documents}
 
         logger.info("Chunking documents...")
         for doc in documents:
             content = doc.get("content", "")
             source = doc.get("source", "unknown")
             chunks = self.chunk_text(content, source)
-            all_chunks.extend(chunks)
 
-        logger.info(f"Created {len(all_chunks)} chunks from {len(documents)} documents.")
+            new_chunks_only = [c for c in chunks if c.idx not in existing_ids]
+            all_chunks.extend(new_chunks_only)
+            existing_ids.update(c.idx for c in new_chunks_only)
+
+        if not all_chunks:
+            logger.info("No new chunks to add (all already indexed).")
+            return
+
+        logger.info(f"Created {len(all_chunks)} new chunks from {len(documents)} documents.")
 
         logger.info("Generating embeddings...")
         texts = [chunk.text for chunk in all_chunks]
@@ -217,10 +225,9 @@ class OfflineCodeDocRAG:
         self.index.add(embeddings)
 
         # Store documents metadata
-        for chunk in all_chunks:
-            self.documents.append(chunk)
+        self.documents.extend(all_chunks)
 
-        logger.info(f"Successfully indexed {len(all_chunks)} chunks.")
+        logger.info(f"Successfully indexed {len(all_chunks)} new chunks.")
 
         if save_after_adding:
             self.save_index()
@@ -318,7 +325,7 @@ class OfflineCodeDocRAG:
 
     def clear_index(self) -> None:
         """Clear the index and all stored documents."""
-        self.create_new_index()
+        self._create_new_index()
 
         if self.index_file.exists():
             self.index_file.unlink()
