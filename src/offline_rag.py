@@ -1,7 +1,7 @@
 """Offline RAG Pipeline for Code Documentation Retrieval."""
 
 import hashlib
-import pickle
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +25,6 @@ class Document:
     source: str
     start_char: int
     end_char: int
-    embedding: np.ndarray | None = None
 
 
 class OfflineCodeDocRAG:
@@ -69,7 +68,7 @@ class OfflineCodeDocRAG:
         self.max_length = max_length or self.tokenizer.model_max_length
         self.embedding_dim = self.model.config.hidden_size
         self.index_file = self.index_path / "faiss.index"
-        self.metadata_file = self.index_path / "metadata.pkl"
+        self.metadata_file = self.index_path / "metadata.json"
 
         if self.index_file.exists() and self.metadata_file.exists():
             self._load_index()
@@ -86,16 +85,33 @@ class OfflineCodeDocRAG:
     def _load_index(self) -> None:
         """Load existing FAISS index and metadata."""
         self.index = faiss.read_index(str(self.index_file))
-        with Path.open(self.metadata_file, "rb") as f:
-            self.documents = pickle.load(f)
+
+        with Path.open(self.metadata_file, "r", encoding="utf-8") as f:
+            raw_documents = json.load(f)
+
+        self.documents = [Document(**doc) for doc in raw_documents]
         logger.info(f"Loaded existing index with {len(self.documents)} documents")
 
     def save_index(self) -> None:
         """Save FAISS index and metadata to disk."""
         faiss.write_index(self.index, str(self.index_file))
-        with Path.open(self.metadata_file, "wb") as f:
-            pickle.dump(self.documents, f)
+
+        raw_docs = [
+            {
+                "idx": doc.idx,
+                "text": doc.text,
+                "source": doc.source,
+                "start_char": doc.start_char,
+                "end_char": doc.end_char,
+            }
+            for doc in self.documents
+        ]
+
+        with Path.open(self.metadata_file, "w", encoding="utf-8") as f:
+            json.dump(raw_docs, f, ensure_ascii=False, indent=2)
+
         logger.info(f"Saved index with {len(self.documents)} documents")
+
 
     def mean_pooling(self, model_output: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
         """Apply mean pooling to get sentence embeddings."""
@@ -214,8 +230,7 @@ class OfflineCodeDocRAG:
         self.index.add(embeddings)
 
         # Store documents metadata
-        for chunk, embedding in zip(all_chunks, embeddings, strict=True):
-            chunk.embedding = embedding
+        for chunk in all_chunks:
             self.documents.append(chunk)
 
         logger.info(f"Successfully indexed {len(all_chunks)} chunks.")
