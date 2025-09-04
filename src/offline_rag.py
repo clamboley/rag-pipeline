@@ -302,7 +302,7 @@ class OfflineCodeDocRAG:
                 continue
 
             doc = self.documents[idx]
-            if filter_source and doc.source != filter_source:
+            if filter_source and filter_source not in doc.source:
                 continue
 
             results.append(
