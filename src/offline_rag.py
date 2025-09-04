@@ -112,7 +112,6 @@ class OfflineCodeDocRAG:
 
         logger.info(f"Saved index with {len(self.documents)} documents")
 
-
     def mean_pooling(self, model_output: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
         """Apply mean pooling to get sentence embeddings."""
         # First element of model_output contains all token embeddings
@@ -156,36 +155,22 @@ class OfflineCodeDocRAG:
         return np.vstack(all_embeddings)
 
     def chunk_text(self, text: str, source: str = "") -> list[Document]:
-        """Split text into overlapping chunks.
+        """Split text into overlapping token chunks using the tokenizer."""
+        tokens = self.tokenizer.encode(text, add_special_tokens=False)
+        total_tokens = len(tokens)
 
-        Args:
-            text (str): Text to split in chunks.
-            source (str): Source identifier for the text.
-
-        Returns:
-            List of Document objects.
-        """
         chunks = []
         start = 0
-        text_length = len(text)
+        while start < total_tokens:
+            end = min(start + self.chunk_size, total_tokens)
+            chunk_tokens = tokens[start:end]
+            chunk_text = self.tokenizer.decode(chunk_tokens)
 
-        while start < text_length:
-            end = min(start + self.chunk_size, text_length)
-
-            # Try to find a good breaking point
-            if end < text_length:
-                for delimiter in ["\n\n", "\n", ". ", " "]:
-                    delimiter_pos = text.rfind(delimiter, start, end)
-                    if delimiter_pos != -1 and delimiter_pos > start:
-                        end = delimiter_pos + len(delimiter)
-                        break
-
-            chunk_text = text[start:end].strip()
-            if chunk_text:
-                chunk_id = hashlib.md5(f"{source}_{start}_{chunk_text[:50]}".encode()).hexdigest()
+            if chunk_text.strip():
+                chunk_id = f"{source}_{start}_{end}"
                 chunks.append(
                     Document(
-                        idx=chunk_id,
+                        idx=hashlib.md5(chunk_id.encode(), usedforsecurity=False).hexdigest(),
                         text=chunk_text,
                         source=source,
                         start_char=start,
@@ -193,7 +178,7 @@ class OfflineCodeDocRAG:
                     ),
                 )
 
-            start = end - self.chunk_overlap if end < text_length else end
+            start += self.chunk_size - self.chunk_overlap
 
         return chunks
 
