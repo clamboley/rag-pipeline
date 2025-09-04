@@ -96,17 +96,7 @@ class OfflineCodeDocRAG:
         """Save FAISS index and metadata to disk."""
         faiss.write_index(self.index, str(self.index_file))
 
-        raw_docs = [
-            {
-                "idx": doc.idx,
-                "text": doc.text,
-                "source": doc.source,
-                "start_char": doc.start_char,
-                "end_char": doc.end_char,
-            }
-            for doc in self.documents
-        ]
-
+        raw_docs = [vars(doc) for doc in self.documents]
         with Path.open(self.metadata_file, "w", encoding="utf-8") as f:
             json.dump(raw_docs, f, ensure_ascii=False, indent=2)
 
@@ -155,30 +145,42 @@ class OfflineCodeDocRAG:
         return np.vstack(all_embeddings)
 
     def chunk_text(self, text: str, source: str = "") -> list[Document]:
-        """Split text into overlapping token chunks using the tokenizer."""
-        tokens = self.tokenizer.encode(text, add_special_tokens=False)
+        """Split text into overlapping token chunks, preserving char offsets."""
+        encoding = self.tokenizer(
+            text,
+            add_special_tokens=False,
+            return_offsets_mapping=True,
+        )
+
+        tokens = encoding["input_ids"]
+        offsets = encoding["offset_mapping"]
         total_tokens = len(tokens)
 
         chunks = []
-        start = 0
-        while start < total_tokens:
-            end = min(start + self.chunk_size, total_tokens)
-            chunk_tokens = tokens[start:end]
-            chunk_text = self.tokenizer.decode(chunk_tokens)
+        start_token = 0
 
-            if chunk_text.strip():
-                chunk_id = f"{source}_{start}_{end}"
+        while start_token < total_tokens:
+            end_token = min(start_token + self.chunk_size, total_tokens)
+
+            # Character positions from first and last token
+            start_char = offsets[start_token][0]
+            end_char = offsets[end_token - 1][1]
+
+            chunk_text = text[start_char:end_char].strip()
+
+            if chunk_text:
+                chunk_id = f"{source}:{start_char}-{end_char}"
                 chunks.append(
                     Document(
-                        idx=hashlib.md5(chunk_id.encode(), usedforsecurity=False).hexdigest(),
+                        idx=hashlib.sha256(chunk_id.encode()).hexdigest(),
                         text=chunk_text,
                         source=source,
-                        start_char=start,
-                        end_char=end,
+                        start_char=start_char,
+                        end_char=end_char,
                     ),
                 )
 
-            start += self.chunk_size - self.chunk_overlap
+            start_token += self.chunk_size - self.chunk_overlap
 
         return chunks
 
