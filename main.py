@@ -101,7 +101,6 @@ if __name__ == "__main__":
     # Ex 1 : Add individual documents
     if not args.data_files:
         rag.add_documents(EXAMPLE_DOCUMENTS)
-        # TODO: Fix mini-chunks appearing at the end
 
     # Ex 2: Add files from directory
     if args.data_files:
