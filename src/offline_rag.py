@@ -168,7 +168,7 @@ class OfflineCodeDocRAG:
 
             chunk_text = text[start_char:end_char].strip()
 
-            if chunk_text:
+            if chunk_text and end_token - start_token > self.chunk_overlap:
                 chunk_id = f"{source}:{start_char}-{end_char}"
                 chunks.append(
                     Document(
