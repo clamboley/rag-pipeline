@@ -36,6 +36,9 @@ class OfflineCodeDocRAG:
         index_path: Path | str = "./rag_index",
         chunk_size: int = 500,
         chunk_overlap: int = 50,
+        index_type: str = "flat",
+        ivf_clusters: int = 100,
+        hnsw_graph_degree: int = 32,
         max_length: int | None = None,
         device: str | None = None,
     ) -> None:
@@ -46,17 +49,21 @@ class OfflineCodeDocRAG:
             index_path (str): Directory to store the FAISS index and metadata.
             chunk_size (int): Size of text chunks in characters.
             chunk_overlap (int): Overlap between chunks in characters.
-            max_length (int, optional): Maximum input length for embedding model (None for max).
-            device (str, optional): Device for model inference ('cuda', 'cpu', or None for auto).
+            index_type (str): Type of FAISS index: "flat", "ivf", "hnsw".
+                - Flat → exact, best for small datasets (<50k chunks).
+                - IVF → cluster-based approximation, for mid-size datasets (train required).
+                - HNSW → graph-based approximation, scalable and fast with high recall.
+            ivf_clusters (int): Number of clusters for IVF, must be greater than number of chunks.
+            hnsw_graph_degree (int): Graph degree for HNSW (Number of neighbors).
+            max_length (int, optional): Maximum input length for embedding model.
+            device (str, optional): Device for model inference ('cuda', 'cpu', None=auto).
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.index_path = Path(index_path)
         self.index_path.mkdir(exist_ok=True)
 
-        self.device = device
-        if not self.device:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         logger.info(f"Using device: {self.device}")
 
         logger.info(f"Loading model from local directory: {model_path}")
@@ -67,8 +74,14 @@ class OfflineCodeDocRAG:
 
         self.max_length = max_length or self.tokenizer.model_max_length
         self.embedding_dim = self.model.config.hidden_size
+
         self.index_file = self.index_path / "faiss.index"
         self.metadata_file = self.index_path / "metadata.json"
+
+        # Store index config
+        self.index_type = index_type.lower()
+        self.ivf_clusters = ivf_clusters
+        self.hnsw_graph_degree = hnsw_graph_degree
 
         if self.index_file.exists() and self.metadata_file.exists():
             self._load_index()
@@ -76,11 +89,37 @@ class OfflineCodeDocRAG:
             self._create_new_index()
 
     def _create_new_index(self) -> None:
-        """Create a new FAISS index and metadata store."""
-        # Using IndexFlatIP for inner product
-        self.index = faiss.IndexFlatIP(self.embedding_dim)
+        """Create a new FAISS index based on index_type."""
+        if self.index_type == "flat":
+            self.index = faiss.IndexFlatIP(self.embedding_dim)
+            msg = f"Created IndexFlatIP (exact search) with dim={self.embedding_dim}"
+            logger.info(msg)
+
+        elif self.index_type == "ivf":
+            quantizer = faiss.IndexFlatIP(self.embedding_dim)
+            self.index = faiss.IndexIVFFlat(
+                quantizer,
+                self.embedding_dim,
+                self.ivf_clusters,
+                faiss.METRIC_INNER_PRODUCT,
+            )
+            msg = f"Created IndexIVFFlat with dim={self.embedding_dim}, nlist={self.nlist}"
+            logger.info(msg)
+
+        elif self.index_type == "hnsw":
+            self.index = faiss.IndexHNSWFlat(
+                self.embedding_dim,
+                self.hnsw_graph_degree,
+                faiss.METRIC_INNER_PRODUCT,
+            )
+            msg = f"Created IndexHNSWFlat with dim={self.embedding_dim}, M={self.hnsw_graph_degree}"
+            logger.info(msg)
+
+        else:
+            msg = f"Unknown index_type: {self.index_type}"
+            raise ValueError(msg)
+
         self.documents = []
-        logger.info(f"Created new FAISS index with dimension {self.embedding_dim}")
 
     def _load_index(self) -> None:
         """Load existing FAISS index and metadata."""
@@ -221,6 +260,11 @@ class OfflineCodeDocRAG:
         texts = [chunk.text for chunk in all_chunks]
         embeddings = self.encode_texts(texts, batch_size=batch_size)
 
+        # If IVF, must train before adding
+        if isinstance(self.index, faiss.IndexIVFFlat) and not self.index.is_trained:
+            logger.info("Training IVF index...")
+            self.index.train(embeddings)
+
         # Add to FAISS index
         self.index.add(embeddings)
 
@@ -248,7 +292,7 @@ class OfflineCodeDocRAG:
         """
         documents = []
 
-        logger.info(f"{file_paths = }")
+        logger.info(f"Reading from: {[str(f) for f in file_paths]}")
 
         for path in file_paths:
             path_obj = Path(path)
