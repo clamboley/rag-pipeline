@@ -77,6 +77,13 @@ if __name__ == "__main__":
         help="Overlap between consecutive chunks in characters.",
     )
     parser.add_argument(
+        "--index-type",
+        type=str,
+        default="flat",
+        choices=["flat", "ivf", "hnsw"],
+        help="String that needs to be present in the source file path to be retrieved.",
+    )
+    parser.add_argument(
         "--top-k",
         type=int,
         default=3,
@@ -95,6 +102,7 @@ if __name__ == "__main__":
         index_path=args.index_path,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
+        index_type=args.index_type,
         device="cpu",
     )
 
