@@ -67,13 +67,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--chunk-size",
         type=int,
-        default=500,
+        default=4000,
         help="Size of each document chunk in characters.",
     )
     parser.add_argument(
         "--chunk-overlap",
         type=int,
-        default=50,
+        default=200,
         help="Overlap between consecutive chunks in characters.",
     )
     parser.add_argument(
@@ -112,7 +112,7 @@ if __name__ == "__main__":
 
     # Ex 2: Add files from directory
     if args.data_files:
-        rag.add_files(args.data_files, extensions=[".md", ".txt", ".py"])
+        rag.add_files(args.data_files)
 
     # Retrieve relevant documentation
     query = "How to chunk a text in a RAG pipeline?"
@@ -124,9 +124,9 @@ if __name__ == "__main__":
 
     for i, result in enumerate(results, 1):
         print(f"Result {i}:")
-        print(f"Source: {result['source']}")
-        print(f"Score: {result['score']:.3f}")
-        print(f'Text preview:\n"""{result["text"]}"""')
+        print(f"> Source: {result['metadata']['source']}")
+        print(f"> Score: {result['score']:.3f}")
+        print(f'> Text preview:\n\n{result["text"]}\n')
         print("-" * 50)
 
     print(f"Index Statistics: {rag.get_stats()}")

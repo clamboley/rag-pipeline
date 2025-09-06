@@ -2,29 +2,18 @@
 
 import hashlib
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
 import faiss
 import numpy as np
 import torch
+from langchain_core.documents import Document
 from transformers import AutoModel, AutoTokenizer
 
+from src.splitting import DEFAULT_EXTENSIONS, make_splitter_for_file
 from src.utils import read_file, search_files, setup_logger
 
-DEFAULT_EXTENSIONS = [".md", ".txt", ".rst", ".py"]
 logger = setup_logger(__name__)
-
-
-@dataclass
-class Document:
-    """Document chunk with metadata."""
-
-    idx: str
-    text: str
-    source: str
-    start_char: int
-    end_char: int
 
 
 class OfflineCodeDocRAG:
@@ -34,8 +23,8 @@ class OfflineCodeDocRAG:
         self,
         model_path: Path | str,
         index_path: Path | str = "./rag_index",
-        chunk_size: int = 500,
-        chunk_overlap: int = 50,
+        chunk_size: int = 4000,
+        chunk_overlap: int = 200,
         index_type: str = "flat",
         ivf_clusters: int = 100,
         hnsw_graph_degree: int = 32,
@@ -143,7 +132,6 @@ class OfflineCodeDocRAG:
 
     def mean_pooling(self, model_output: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
         """Apply mean pooling to get sentence embeddings."""
-        # First element of model_output contains all token embeddings
         token_embeddings = model_output[0]
         mask = attn_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
         return torch.sum(token_embeddings * mask, 1) / torch.clamp(mask.sum(1), min=1e-9)
@@ -184,6 +172,23 @@ class OfflineCodeDocRAG:
         return np.vstack(all_embeddings)
 
     def chunk_text(self, text: str, source: str = "") -> list[Document]:
+        """Split text into overlapping chunks, based on the file type structure."""
+        splitter = make_splitter_for_file(
+            file_path=Path(source),
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+        )
+
+        splitted_docs = splitter.create_documents([text], metadatas=[{"source": source}])
+
+        for doc in splitted_docs:
+            start_index = doc.metadata["start_index"]
+            chunk_id = f"{source}:{start_index}"
+            doc.metadata["id"] = hashlib.sha256(chunk_id.encode()).hexdigest()
+
+        return splitted_docs
+
+    def _old_chunk_text(self, text: str, source: str = "") -> list[Document]:
         """Split text into overlapping token chunks, preserving char offsets."""
         encoding = self.tokenizer(
             text,
@@ -237,8 +242,8 @@ class OfflineCodeDocRAG:
             batch_size: Number of embeddings to generate at once.
             save_after_adding (bool): Whether to save the index after adding documents.
         """
-        all_chunks = []
-        existing_ids = {doc.idx for doc in self.documents}
+        chunks_to_add = []
+        existing_ids = {doc.metadata["id"] for doc in self.documents}
 
         logger.info("Chunking documents...")
         for doc in documents:
@@ -246,32 +251,31 @@ class OfflineCodeDocRAG:
             source = doc.get("source", "unknown")
             chunks = self.chunk_text(content, source)
 
-            new_chunks_only = [c for c in chunks if c.idx not in existing_ids]
-            all_chunks.extend(new_chunks_only)
-            existing_ids.update(c.idx for c in new_chunks_only)
+            new_chunks_only = [c for c in chunks if c.metadata["id"] not in existing_ids]
+            chunks_to_add.extend(new_chunks_only)
+            existing_ids.update(c.metadata["id"] for c in new_chunks_only)
 
-        if not all_chunks:
+        if not chunks_to_add:
             logger.info("No new chunks to add (all already indexed).")
             return
 
-        logger.info(f"Created {len(all_chunks)} new chunks from {len(documents)} documents.")
+        logger.info(f"Created {len(chunks_to_add)} new chunks from {len(documents)} documents.")
 
         logger.info("Generating embeddings...")
-        texts = [chunk.text for chunk in all_chunks]
-        embeddings = self.encode_texts(texts, batch_size=batch_size)
+        embeddings = self.encode_texts(
+            [chunk.page_content for chunk in chunks_to_add],
+            batch_size=batch_size,
+        )
 
         # If IVF, must train before adding
         if isinstance(self.index, faiss.IndexIVFFlat) and not self.index.is_trained:
             logger.info("Training IVF index...")
             self.index.train(embeddings)
 
-        # Add to FAISS index
         self.index.add(embeddings)
+        self.documents.extend(chunks_to_add)
 
-        # Store documents metadata
-        self.documents.extend(all_chunks)
-
-        logger.info(f"Successfully indexed {len(all_chunks)} new chunks.")
+        logger.info(f"Successfully indexed {len(chunks_to_add)} new chunks.")
 
         if save_after_adding:
             self.save_index()
@@ -297,7 +301,7 @@ class OfflineCodeDocRAG:
         for path in file_paths:
             path_obj = Path(path)
 
-            if path_obj.is_file() and any(path_obj.suffix == ext for ext in extensions):
+            if path_obj.is_file() and path_obj.suffix.lower() in extensions:
                 content_dict = read_file(path_obj)
                 if content_dict:
                     documents.append(content_dict)
@@ -351,14 +355,9 @@ class OfflineCodeDocRAG:
 
             results.append(
                 {
-                    "text": doc.text,
-                    "source": doc.source,
+                    "text": doc.page_content,
                     "score": float(score),
-                    "metadata": {
-                        "start_char": doc.start_char,
-                        "end_char": doc.end_char,
-                        "idx": doc.idx,
-                    },
+                    "metadata": doc.metadata,
                 },
             )
 
@@ -384,6 +383,6 @@ class OfflineCodeDocRAG:
         return {
             "total_documents": len(self.documents),
             "index_size_bytes": self.index_file.stat().st_size if self.index_file.exists() else 0,
-            "unique_sources": len({doc.source for doc in self.documents}),
+            "unique_sources": len({doc.metadata["source"] for doc in self.documents}),
             "embedding_dimension": self.embedding_dim,
         }
