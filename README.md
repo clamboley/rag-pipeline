@@ -9,6 +9,7 @@ A lightweight, easy to use, and completely offline Retrieval-Augmented Generatio
 - **Fast Vector Search**: Leverages FAISS for efficient similarity search
 - **Persistent Storage**: Saves and loads indexes from disk
 - **Smart Chunking**: Intelligently splits documents with configurable overlap
+- **Hybrid Search**: Combines semantic and probabilistic search for better results
 - **GPU Acceleration**: Optional CUDA support for faster embeddings
 
 ## 📂 Project Structure
@@ -31,7 +32,7 @@ A lightweight, easy to use, and completely offline Retrieval-Augmented Generatio
 #### <u>With pip :</u>
 
 ```bash
-pip install torch transformers numpy langchain-text-splitters
+pip install torch transformers numpy langchain-text-splitters rank-bm25
 
 pip install faiss-cpu # For CPU-only setup
 pip install faiss-gpu # For GPU acceleration (CUDA)
@@ -120,20 +121,25 @@ rag.add_documents(documents)
 
 ### Retrieving Information
 
+We use a hybrid search approach combining semantic and probabilistic search for optimal results. The FAISS (semantic) and BM25 (probabilistic) rankings are combined using reciprocal rank fusion.
+
 ```python
 # Basic retrieval
 results = rag.retrieve("query string", top_k=5)
 
-# Filter by source
+# Different weight for semantic and bm25 search
 results = rag.retrieve(
     "async functions", 
     top_k=3,
-    filter_source="async_guide.md"
+    semantic_weight=0.8,
+    bm25_weight=0.2,
 )
 
 # Process results
 for result in results:
     print(f"Relevance Score: {result['score']}")
+    print(f"> From semantic: {result['from_semantic']}")
+    print(f"> From bm25: {result['from_bm25']}")
     print(f"Source: {result['metadata']['source']}")
     print(f"Start char = {result['metadata']['start_char']}")
     print(f"Document ID = {result['metadata']['id']}")

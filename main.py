@@ -90,10 +90,16 @@ if __name__ == "__main__":
         help="Number of document to retrieve from vector DB.",
     )
     parser.add_argument(
-        "--filter-source",
-        type=str,
-        default=None,
-        help="String that needs to be present in the source file path to be retrieved.",
+        "--semantic-weight",
+        type=float,
+        default=0.8,
+        help="Weight of semantic search in hybrid retrieval.",
+    )
+    parser.add_argument(
+        "--bm25-weight",
+        type=float,
+        default=0.2,
+        help="Weight of BM25 search in hybrid retrieval.",
     )
     args = parser.parse_args()
 
@@ -116,7 +122,12 @@ if __name__ == "__main__":
 
     # Retrieve relevant documentation
     query = "How to chunk a text in a RAG pipeline?"
-    results = rag.retrieve(query, top_k=args.top_k, filter_source=args.filter_source)
+    results = rag.retrieve_hybrid(
+        query,
+        top_k=args.top_k,
+        semantic_weight=args.semantic_weight,
+        bm25_weight=args.bm25_weight,
+    )
 
     print(f'Query: "{query}"')
     print(f"Found {len(results)} relevant chunks:\n")
@@ -126,7 +137,9 @@ if __name__ == "__main__":
         print(f"Result {i}:")
         print(f"> Source: {result['metadata']['source']}")
         print(f"> Score: {result['score']:.3f}")
-        print(f'> Text preview:\n\n{result["text"]}\n')
+        print(f"> From semantic: {result['from_semantic']}")
+        print(f"> From BM25: {result['from_bm25']}")
+        print(f"> Text preview:\n\n{result['text']}\n")
         print("-" * 50)
 
     print(f"Index Statistics: {rag.get_stats()}")

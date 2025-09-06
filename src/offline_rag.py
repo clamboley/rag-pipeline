@@ -8,6 +8,7 @@ import faiss
 import numpy as np
 import torch
 from langchain_core.documents import Document
+from rank_bm25 import BM25Okapi
 from transformers import AutoModel, AutoTokenizer
 
 from src.splitting import DEFAULT_EXTENSIONS, make_splitter_for_file
@@ -74,6 +75,7 @@ class OfflineCodeDocRAG:
 
         if self.index_file.exists() and self.metadata_file.exists():
             self._load_index()
+            self._build_bm25_index()
         else:
             self._create_new_index()
 
@@ -118,7 +120,12 @@ class OfflineCodeDocRAG:
             raw_documents = json.load(f)
 
         self.documents = [Document(**doc) for doc in raw_documents]
-        logger.info(f"Loaded existing index with {len(self.documents)} documents")
+        logger.info(f"Loaded existing index with {len(self.documents)} documents.")
+
+    def _build_bm25_index(self) -> None:
+        """Build a BM25 index from the current documents."""
+        self.bm25 = BM25Okapi([doc.page_content.split() for doc in self.documents])
+        logger.info(f"BM25 indexed ({len(self.documents)} documents).")
 
     def save_index(self) -> None:
         """Save FAISS index and metadata to disk."""
@@ -128,7 +135,7 @@ class OfflineCodeDocRAG:
         with Path.open(self.metadata_file, "w", encoding="utf-8") as f:
             json.dump(raw_docs, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"Saved index with {len(self.documents)} documents")
+        logger.info(f"Saved index with {len(self.documents)} documents.")
 
     def mean_pooling(self, model_output: torch.Tensor, attn_mask: torch.Tensor) -> torch.Tensor:
         """Apply mean pooling to get sentence embeddings."""
@@ -188,46 +195,6 @@ class OfflineCodeDocRAG:
 
         return splitted_docs
 
-    def _old_chunk_text(self, text: str, source: str = "") -> list[Document]:
-        """Split text into overlapping token chunks, preserving char offsets."""
-        encoding = self.tokenizer(
-            text,
-            add_special_tokens=False,
-            return_offsets_mapping=True,
-        )
-
-        tokens = encoding["input_ids"]
-        offsets = encoding["offset_mapping"]
-        total_tokens = len(tokens)
-
-        chunks = []
-        start_token = 0
-
-        while start_token < total_tokens:
-            end_token = min(start_token + self.chunk_size, total_tokens)
-
-            # Character positions from first and last token
-            start_char = offsets[start_token][0]
-            end_char = offsets[end_token - 1][1]
-
-            chunk_text = text[start_char:end_char].strip()
-
-            if chunk_text and end_token - start_token > self.chunk_overlap:
-                chunk_id = f"{source}:{start_char}-{end_char}"
-                chunks.append(
-                    Document(
-                        idx=hashlib.sha256(chunk_id.encode()).hexdigest(),
-                        text=chunk_text,
-                        source=source,
-                        start_char=start_char,
-                        end_char=end_char,
-                    ),
-                )
-
-            start_token += self.chunk_size - self.chunk_overlap
-
-        return chunks
-
     def add_documents(
         self,
         documents: list[dict[str, str]],
@@ -276,6 +243,7 @@ class OfflineCodeDocRAG:
         self.documents.extend(chunks_to_add)
 
         logger.info(f"Successfully indexed {len(chunks_to_add)} new chunks.")
+        self._build_bm25_index()
 
         if save_after_adding:
             self.save_index()
@@ -322,53 +290,93 @@ class OfflineCodeDocRAG:
     def retrieve(
         self,
         query: str,
-        top_k: int = 5,
-        filter_source: str | None = None,
+        top_k: int = 4,
+        semantic_weight: float = 0.8,
+        bm25_weight: float = 0.2,
     ) -> list[dict]:
-        """Retrieve relevant documentation chunks for a query.
+        """Retrieve relevant documents for a given query.
+
+        NOTE: It uses hybrid retrieval, combining FAISS (semantic) and
+            BM25 (probabilistic) rankings with reciprocal rank fusion.
 
         Args:
             query (str): Search query.
             top_k (int): Number of results to return.
-            filter_source (str, optional): Source file to filter results.
+            semantic_weight (float): Weight of semantic search. Defaults to 0.8.
+            bm25_weight (float): Weight of BM25 search. Defaults to 0.2.
+
+        Raises:
+            ValueError: If both semantic_weight and bm25_weight are less than 0.0.
 
         Returns:
-            List of dictionaries containing retrieved chunks and metadata.
+            list[dict]: List of dictionaries containing the retrieved documents.
         """
         if len(self.documents) == 0:
             logger.info("No documents in index. Please add documents first.")
             return []
 
-        # Generate query embedding and search in FAISS
-        query_embedding = self.encode_texts([query])[0].reshape(1, -1)
-        scores, indices = self.index.search(query_embedding, min(top_k * 2, len(self.documents)))
+        use_semantic = semantic_weight > 0.0
+        use_bm25 = bm25_weight > 0.0
+        if not use_semantic and not use_bm25:
+            msg = f"Invalid weights: semantic_weight={semantic_weight}, bm25_weight={bm25_weight}"
+            raise ValueError(msg)
 
-        # Format results
+        num_chunks_to_recall = top_k * 2
+
+        faiss_ranks = {}
+        if use_semantic:
+            query_embedding = self.encode_texts([query])[0].reshape(1, -1)
+            _, [faiss_indices] = self.index.search(query_embedding, num_chunks_to_recall)
+
+            faiss_ranks = {
+                (self.documents[idx].metadata["id"], idx): rank
+                for rank, idx in enumerate(faiss_indices)
+            }
+
+        bm25_ranks = {}
+        if use_bm25:
+            bm25_scores = self.bm25.get_scores(query.split())
+            bm25_top_k = np.argpartition(bm25_scores, -num_chunks_to_recall)[-num_chunks_to_recall:]
+            bm25_indices = bm25_top_k[np.argsort(bm25_scores[bm25_top_k])[::-1]]
+
+            bm25_ranks = {
+                (self.documents[idx].metadata["id"], idx): rank
+                for rank, idx in enumerate(bm25_indices)
+            }
+
+        # Combine ranks using reciprocal rank fusion
+        combined_ranks = {}
+        for chunk_tup in set(faiss_ranks) | set(bm25_ranks):
+            score = 0.0
+            if chunk_tup in faiss_ranks:
+                score += semantic_weight * (1.0 / (1 + faiss_ranks[chunk_tup]))
+            if chunk_tup in bm25_ranks:
+                score += bm25_weight * (1.0 / (1 + bm25_ranks[chunk_tup]))
+            combined_ranks[chunk_tup] = score
+
+        ranked_tuples = sorted(combined_ranks.items(), key=lambda x: x[1], reverse=True)[:top_k]
+
         results = []
-        for score, idx in zip(scores[0], indices[0], strict=True):
-            if idx >= len(self.documents):
-                continue
-
-            doc = self.documents[idx]
-            if filter_source and filter_source not in doc.source:
-                continue
-
+        for chunk_tup, score in ranked_tuples:
+            document = self.documents[chunk_tup[1]]
+            is_from_semantic = chunk_tup in faiss_ranks
+            is_from_bm25 = chunk_tup in bm25_ranks
             results.append(
                 {
-                    "text": doc.page_content,
-                    "score": float(score),
-                    "metadata": doc.metadata,
+                    "score": score,
+                    "text": document.page_content,
+                    "metadata": document.metadata,
+                    "from_semantic": is_from_semantic,
+                    "from_bm25": is_from_bm25,
                 },
             )
-
-            if len(results) >= top_k:
-                break
 
         return results
 
     def clear_index(self) -> None:
         """Clear the index and all stored documents."""
         self._create_new_index()
+        self.bm25 = None
 
         if self.index_file.exists():
             self.index_file.unlink()
