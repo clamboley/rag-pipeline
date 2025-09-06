@@ -262,7 +262,7 @@ class OfflineCodeDocRAG:
             extensions (list[str]): List of file extensions to search for.
             save_after_adding (bool): Whether to save the index after adding files.
         """
-        documents = []
+        file_contents = []
 
         logger.info(f"Reading from: {[str(f) for f in file_paths]}")
 
@@ -272,18 +272,18 @@ class OfflineCodeDocRAG:
             if path_obj.is_file() and path_obj.suffix.lower() in extensions:
                 content_dict = read_file(path_obj)
                 if content_dict:
-                    documents.append(content_dict)
+                    file_contents.append(content_dict)
 
             elif path_obj.is_dir():
                 # Directory - recursively find matching files
                 for file_path in search_files(path_obj, extensions=extensions):
                     content_dict = read_file(file_path)
                     if content_dict:
-                        documents.append(content_dict)
+                        file_contents.append(content_dict)
 
-        if documents:
-            logger.info(f"Found {len(documents)} files to index.")
-            self.add_documents(documents, save_after_adding=save_after_adding)
+        if file_contents:
+            logger.info(f"Found {len(file_contents)} files to index.")
+            self.add_documents(file_contents, save_after_adding=save_after_adding)
         else:
             logger.info("No matching files found.")
 
