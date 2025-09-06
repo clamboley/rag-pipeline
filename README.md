@@ -18,6 +18,7 @@ A lightweight, easy to use, and completely offline Retrieval-Augmented Generatio
 ├── main.py                # Example usage
 ├── src/
 │   ├── offline_rag.py     # Main pipeline code
+│   ├── splitting.py       # Structure aware splitters
 │   └── utils.py           # Logging and OS operations
 ├── pyproject.toml         # Project dependencies
 └── README.md              # This file
@@ -30,11 +31,10 @@ A lightweight, easy to use, and completely offline Retrieval-Augmented Generatio
 #### <u>With pip :</u>
 
 ```bash
-# For CPU-only setup
-pip install torch transformers faiss-cpu numpy
+pip install torch transformers numpy langchain-text-splitters
 
-# For GPU acceleration (CUDA)
-pip install torch transformers faiss-gpu numpy
+pip install faiss-cpu # For CPU-only setup
+pip install faiss-gpu # For GPU acceleration (CUDA)
 ```
 
 #### <u>With uv :</u>
@@ -72,8 +72,8 @@ from offline_rag import OfflineCodeDocRAG
 rag = OfflineCodeDocRAG(
     model_path="./models/my-model",
     index_path="./my_index",
-    chunk_size=500,
-    chunk_overlap=50
+    chunk_size=2000,
+    chunk_overlap=150,
 )
 
 # Add documentation files
@@ -83,8 +83,8 @@ rag.add_files(['./docs', './README.md'])
 results = rag.retrieve("How do I implement authentication?", top_k=5)
 
 for result in results:
-    print(f"📄 {result['source']} (score: {result['score']:.2f})")
-    print(f"   {result['text'][:150]}...")
+    print(f"Source: {result['metadata']['source']} (score: {result['score']:.2f})")
+    print(f"Content: {result['text']}...")
 ```
 
 ## 📚 Detailed Usage
@@ -133,10 +133,11 @@ results = rag.retrieve(
 
 # Process results
 for result in results:
-    print(f"Source: {result['source']}")
     print(f"Relevance Score: {result['score']}")
+    print(f"Source: {result['metadata']['source']}")
+    print(f"Start char = {result['metadata']['start_char']}")
+    print(f"Document ID = {result['metadata']['id']}")
     print(f"Content: {result['text']}")
-    print(f"Location: chars {result['metadata']['start_char']}-{result['metadata']['end_char']}")
 ```
 
 ### Managing the Index
