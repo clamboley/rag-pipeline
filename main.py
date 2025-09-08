@@ -122,7 +122,7 @@ if __name__ == "__main__":
 
     # Retrieve relevant documentation
     query = "How to chunk a text in a RAG pipeline?"
-    results = rag.retrieve_hybrid(
+    results = rag.retrieve(
         query,
         top_k=args.top_k,
         semantic_weight=args.semantic_weight,
