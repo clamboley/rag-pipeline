@@ -291,8 +291,9 @@ class OfflineCodeDocRAG:
         self,
         query: str,
         top_k: int = 4,
-        semantic_weight: float = 0.8,
-        bm25_weight: float = 0.2,
+        semantic_weight: float = 0.5,
+        bm25_weight: float = 0.5,
+        num_chunks_to_recall: int | None = None,
     ) -> list[dict]:
         """Retrieve relevant documents for a given query.
 
@@ -302,8 +303,10 @@ class OfflineCodeDocRAG:
         Args:
             query (str): Search query.
             top_k (int): Number of results to return.
-            semantic_weight (float): Weight of semantic search. Defaults to 0.8.
-            bm25_weight (float): Weight of BM25 search. Defaults to 0.2.
+            semantic_weight (float): Weight of semantic search. Defaults to 0.5.
+            bm25_weight (float): Weight of BM25 search. Defaults to 0.5.
+            num_chunks_to_recall (int, optional): Number of chunks to recall. If not
+                provided, it will be set to min(top_k * 4, len(self.documents)).
 
         Raises:
             ValueError: If both semantic_weight and bm25_weight are less than 0.0.
@@ -321,7 +324,7 @@ class OfflineCodeDocRAG:
             logger.info("No documents in index. Please add documents first.")
             return []
 
-        num_chunks_to_recall = min(top_k * 2, len(self.documents))
+        num_chunks_to_recall = num_chunks_to_recall or min(top_k * 4, len(self.documents))
 
         faiss_ranks = {}
         if use_semantic:

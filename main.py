@@ -92,13 +92,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--semantic-weight",
         type=float,
-        default=0.8,
+        default=0.5,
         help="Weight of semantic search in hybrid retrieval.",
     )
     parser.add_argument(
         "--bm25-weight",
         type=float,
-        default=0.2,
+        default=0.5,
         help="Weight of BM25 search in hybrid retrieval.",
     )
     args = parser.parse_args()
@@ -121,7 +121,7 @@ if __name__ == "__main__":
         rag.add_files(args.data_files)
 
     # Retrieve relevant documentation
-    query = "How to chunk a text in a RAG pipeline?"
+    query = "How to read a file using the read_file function ?"
     results = rag.retrieve(
         query,
         top_k=args.top_k,
@@ -136,6 +136,7 @@ if __name__ == "__main__":
     for i, result in enumerate(results, 1):
         print(f"Result {i}:")
         print(f"> Source: {result['metadata']['source']}")
+        print(f"> ID: {result['metadata']['id']}")
         print(f"> Score: {result['score']:.3f}")
         print(f"> From semantic: {result['from_semantic']}")
         print(f"> From BM25: {result['from_bm25']}")
