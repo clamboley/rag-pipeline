@@ -311,17 +311,17 @@ class OfflineCodeDocRAG:
         Returns:
             list[dict]: List of dictionaries containing the retrieved documents.
         """
-        if len(self.documents) == 0:
-            logger.info("No documents in index. Please add documents first.")
-            return []
-
         use_semantic = semantic_weight > 0.0
         use_bm25 = bm25_weight > 0.0
         if not use_semantic and not use_bm25:
             msg = f"Invalid weights: semantic_weight={semantic_weight}, bm25_weight={bm25_weight}"
             raise ValueError(msg)
 
-        num_chunks_to_recall = top_k * 2
+        if len(self.documents) == 0:
+            logger.info("No documents in index. Please add documents first.")
+            return []
+
+        num_chunks_to_recall = min(top_k * 2, len(self.documents))
 
         faiss_ranks = {}
         if use_semantic:
