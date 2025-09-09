@@ -26,6 +26,7 @@ class OfflineCodeDocRAG:
         index_path: Path | str = "./rag_index",
         chunk_size: int = 4000,
         chunk_overlap: int = 200,
+        batch_size: int = 32,
         index_type: str = "flat",
         ivf_clusters: int = 100,
         hnsw_graph_degree: int = 32,
@@ -39,6 +40,7 @@ class OfflineCodeDocRAG:
             index_path (str): Directory to store the FAISS index and metadata.
             chunk_size (int): Size of text chunks in characters.
             chunk_overlap (int): Overlap between chunks in characters.
+            batch_size (int): Batch size for embedding generation.
             index_type (str): Type of FAISS index: "flat", "ivf", "hnsw".
                 - Flat → exact, best for small datasets (<50k chunks).
                 - IVF → cluster-based approximation, for mid-size datasets (train required).
@@ -50,6 +52,7 @@ class OfflineCodeDocRAG:
         """
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.batch_size = batch_size
         self.index_path = Path(index_path)
         self.index_path.mkdir(exist_ok=True)
 
@@ -144,20 +147,19 @@ class OfflineCodeDocRAG:
         return torch.sum(token_embeddings * mask, 1) / torch.clamp(mask.sum(1), min=1e-9)
 
     @torch.no_grad()
-    def encode_texts(self, texts: list[str], batch_size: int = 8) -> np.ndarray:
+    def encode_texts(self, texts: list[str]) -> np.ndarray:
         """Encode texts to embeddings using the local model.
 
         Args:
             texts (list[str]): list of texts to encode.
-            batch_size (int): Number of embeddings to generate at once.
 
         Returns:
             Numpy array of embeddings.
         """
         all_embeddings = []
 
-        for i in range(0, len(texts), batch_size):
-            batch_texts = texts[i : i + batch_size]
+        for i in range(0, len(texts), self.batch_size):
+            batch_texts = texts[i : i + self.batch_size]
 
             token_ids = self.tokenizer(
                 batch_texts,
@@ -198,7 +200,6 @@ class OfflineCodeDocRAG:
     def add_documents(
         self,
         documents: list[dict[str, str]],
-        batch_size: int = 32,
         *,
         save_after_adding: bool = True,
     ) -> None:
@@ -206,7 +207,6 @@ class OfflineCodeDocRAG:
 
         Args:
             documents (list[dict[str, str]]): list of dicts with 'content' and optional 'source'.
-            batch_size: Number of embeddings to generate at once.
             save_after_adding (bool): Whether to save the index after adding documents.
         """
         chunks_to_add = []
@@ -229,10 +229,7 @@ class OfflineCodeDocRAG:
         logger.info(f"Created {len(chunks_to_add)} new chunks from {len(documents)} documents.")
 
         logger.info("Generating embeddings...")
-        embeddings = self.encode_texts(
-            [chunk.page_content for chunk in chunks_to_add],
-            batch_size=batch_size,
-        )
+        embeddings = self.encode_texts([chunk.page_content for chunk in chunks_to_add])
 
         # If IVF, must train before adding
         if isinstance(self.index, faiss.IndexIVFFlat) and not self.index.is_trained:
