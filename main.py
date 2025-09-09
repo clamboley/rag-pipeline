@@ -46,6 +46,7 @@ EXAMPLE_DOCUMENTS = [
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    # Index arguments
     parser.add_argument(
         "--data-files",
         type=Path,
@@ -77,11 +78,24 @@ if __name__ == "__main__":
         help="Overlap between consecutive chunks in characters.",
     )
     parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=16,
+        help="Batch size for embedding generation.",
+    )
+    parser.add_argument(
         "--index-type",
         type=str,
         default="flat",
         choices=["flat", "ivf", "hnsw"],
         help="String that needs to be present in the source file path to be retrieved.",
+    )
+    # Retrival arguments
+    parser.add_argument(
+        "--query",
+        type=str,
+        default="How to use the rag pipeline ?",
+        help="Query to search for in the index.",
     )
     parser.add_argument(
         "--top-k",
@@ -108,8 +122,9 @@ if __name__ == "__main__":
         index_path=args.index_path,
         chunk_size=args.chunk_size,
         chunk_overlap=args.chunk_overlap,
+        batch_size=args.batch_size,
         index_type=args.index_type,
-        device="cpu",
+        device=None,
     )
 
     # Ex 1 : Add individual documents
@@ -121,15 +136,14 @@ if __name__ == "__main__":
         rag.add_files(args.data_files)
 
     # Retrieve relevant documentation
-    query = "How to read a file using the read_file function ?"
     results = rag.retrieve(
-        query,
+        args.query,
         top_k=args.top_k,
         semantic_weight=args.semantic_weight,
         bm25_weight=args.bm25_weight,
     )
 
-    print(f'Query: "{query}"')
+    print(f'Query: "{args.query}"')
     print(f"Found {len(results)} relevant chunks:\n")
     print("-" * 50)
 
