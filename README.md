@@ -1,15 +1,13 @@
 # Offline RAG Pipeline for Code Documentation
 
-A lightweight, easy to use, and completely offline Retrieval-Augmented Generation (RAG) pipeline. This tool helps you build a searchable knowledge base from your documentation files without requiring internet access or external APIs.
+A lightweight, easy to use, and completely offline Retrieval-Augmented Generation (RAG) pipeline. This tool helps you build a searchable knowledge base from your code base or documentation files without requiring internet access or external APIs.
 
 ## 🌟 Features
 
 - **100% Offline**: Works entirely on your local machine with no internet required
-- **Local Model Support**: Uses locally stored HuggingFace models
-- **Fast Vector Search**: Leverages FAISS for efficient similarity search
 - **Persistent Storage**: Saves and loads indexes from disk
-- **Smart Chunking**: Intelligently splits documents with configurable overlap
-- **Hybrid Search**: Combines semantic and probabilistic search for better results
+- **Smart Chunking**: Intelligent structure-aware document chunking with configurable overlap
+- **Hybrid Search**: Combines semantic (FAISS) and frequency-based (BM25) search for better results
 - **GPU Acceleration**: Optional CUDA support for faster embeddings
 
 ## 📂 Project Structure
@@ -21,6 +19,7 @@ A lightweight, easy to use, and completely offline Retrieval-Augmented Generatio
 │   ├── offline_rag.py     # Main pipeline code
 │   ├── splitting.py       # Structure aware splitters
 │   └── utils.py           # Logging and OS operations
+├── tests/                 # Unit and integration tests suite
 ├── pyproject.toml         # Project dependencies
 └── README.md              # This file
 ```
@@ -32,10 +31,7 @@ A lightweight, easy to use, and completely offline Retrieval-Augmented Generatio
 #### <u>With pip :</u>
 
 ```bash
-pip install torch transformers numpy langchain-text-splitters rank-bm25
-
-pip install faiss-cpu # For CPU-only setup
-pip install faiss-gpu # For GPU acceleration (CUDA)
+pip install torch transformers numpy faiss-cpu langchain-text-splitters rank-bm25
 ```
 
 #### <u>With uv :</u>
@@ -75,6 +71,7 @@ rag = OfflineCodeDocRAG(
     index_path="./my_index",
     chunk_size=2000,
     chunk_overlap=150,
+    batch_size=32,
 )
 
 # Add documentation files
@@ -87,6 +84,21 @@ for result in results:
     print(f"Source: {result['metadata']['source']} (score: {result['score']:.2f})")
     print(f"Content: {result['text']}...")
 ```
+
+## ⚠️ Important Notes
+
+To adapt this for your specific use case, you'll certainly need to try different hyperparameter values.
+
+<u>Parameters for RAG quality:</u>
+
+- `chunk_size`: Higher values capture more context but may reduce precision and include irrelevant information.
+- `chunk_overlap`: Controls how much context is shared between chunks. Too much overlap may cause redundancy, while too little may break up logical units.
+- `semantic_weight` and `bm25_weight`: For retrieval, adjust these to balance between semantic similarity and words-frequency matching.
+
+<u>Parameters for performance:</u>
+
+- `batch_size`: Larger batches process faster but require more memory. Adjust based on your GPU/CPU capabilities.
+- `index_type`: You can choose between "flat" (default, exact search), or more scalable options like "ivf" (cluster-based approximation) or "hnsw" (graph-based approximation).
 
 ## 📚 Detailed Usage
 
@@ -121,7 +133,7 @@ rag.add_documents(documents)
 
 ### Retrieving Information
 
-We use a hybrid search approach combining semantic and probabilistic search for optimal results. The FAISS (semantic) and BM25 (probabilistic) rankings are combined using reciprocal rank fusion.
+We use a hybrid search approach combining semantic and frequency-based search for optimal results. The FAISS (semantic) and BM25 (frequency) rankings are combined using reciprocal rank fusion.
 
 ```python
 # Basic retrieval
@@ -141,8 +153,8 @@ for result in results:
     print(f"> From semantic: {result['from_semantic']}")
     print(f"> From bm25: {result['from_bm25']}")
     print(f"Source: {result['metadata']['source']}")
-    print(f"Start char = {result['metadata']['start_char']}")
-    print(f"Document ID = {result['metadata']['id']}")
+    print(f"Start char: {result['metadata']['start_index']}")
+    print(f"Document ID: {result['metadata']['id']}")
     print(f"Content: {result['text']}")
 ```
 
@@ -169,3 +181,6 @@ rag = OfflineCodeDocRAG(
 
 - [HuggingFace Transformers](https://github.com/huggingface/transformers) for model implementations
 - [FAISS](https://github.com/facebookresearch/faiss) for efficient vector search
+- [LangChain](https://github.com/langchain-ai/langchain) for document processing utilities
+- [BM25](https://github.com/dorianbrown/rank_bm25) for frequency-based ranking
+
